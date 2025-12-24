@@ -7,12 +7,9 @@
 #include "steel.h"
 
 // =======================================================================
-//                        [VARIOUS ALGORITHMS]
+//                        [TDMA ALGORITHM]
 // =======================================================================
 
-/**
- * @brief Solves a tridiagonal system of linear equations A*x = d (TDMA).
- */
 std::vector<double> solveTridiagonal(const std::vector<double>& a,
     const std::vector<double>& b,
     const std::vector<double>& c,
@@ -47,62 +44,71 @@ int main() {
     //                    NUMERICAL / PHYSICAL SETUP
     // ===================================================================
 
-    constexpr int N = 20;
-    constexpr double L = 1.0;
-    constexpr double dz = L / N;     // [m]
-    constexpr double dt = 1.0e-2;     // [s]
-    constexpr int time_iter = 10000;
+    constexpr int N = 100;                      // Number of wall cells
+    constexpr double L = 1.0;                   // Wall length [m]
+    constexpr double dz = L / N;                // Cell size [m]
+    constexpr double dt = 1e-1;                 // Time step [s]
+    constexpr int time_iter = 1000;             // Number of time iterations
 
-    std::vector<double> T_w_bulk(N,800.0);
-    std::vector<double> T_w_bulk_old(N, 800.0);
+    std::vector<double> T_w(N, 300.0);          // Initial wall temperature [K]
+    std::vector<double> T_w_old;                // Old temperature [K]
+    std::vector<double> Q(N);              // Heat pipe power [W]
 
-    constexpr double Q_tot = 1000.0;      // Total heat input [W]
-    constexpr double z_evap_start = 0.0; // [m]
-    constexpr double z_evap_end = 0.3; // [m]
-    constexpr double z_cond_start = 0.7; // [m]
-    constexpr double z_cond_end = 1.0; // [m]
-    constexpr double A_wall = 1.0e-4;     // Wall cross-section area [m2]
+    // Tridiagonal matrix coefficients
+    std::vector<double> aTW(N, 0.0);
+    std::vector<double> bTW(N, 0.0);
+    std::vector<double> cTW(N, 0.0);
+    std::vector<double> dTW(N, 0.0);
 
-    // Cell volume (1D slab)
-    const double Vcell = A_wall * dz;
-
-    // Evaporator length
-    const double L_evap = z_evap_end - z_evap_start;
-
-    // Uniform volumetric heat source in evaporator
-    const double q_vol = Q_tot / (A_wall * L_evap); // [W/m3]
-
-    // Initialize heat source
-    std::vector<double> Q_ow(N, 0.0);
+    constexpr double Q_tot = 100.0;                         // Total heat input [W]
+    constexpr double z_evap_start = 0.0;                    // Evaporator start [m]
+    constexpr double z_evap_end = 0.3;                      // Evaporator end [m]
+    constexpr double z_cond_start = 0.7;                    // Condenser start [m]
+    constexpr double z_cond_end = 1.0;                      // Condenser end [m]
+    constexpr double A_wall = 1.0e-4;                       // Wall cross-section area [m2]
+    constexpr double T_amb = 300.0;                         // Ambient temperature [K]
+    constexpr double Vcell = A_wall * dz;                   // Cell volume [m3
+    constexpr double L_evap = z_evap_end - z_evap_start;    // Evaporator length [m]
+    constexpr double q_vol = Q_tot / (A_wall * L_evap);     // Heat volumetric source [W/m3]
 
     for (int i = 0; i < N; ++i) {
-        const double z = i * dz;
-        if (z >= z_evap_start && z <= z_evap_end) {
-            Q_ow[i] = q_vol;
-        }
 
-        if (z >= z_cond_start && z <= z_cond_end) {
-            Q_ow[i] = -q_vol;
-        }
+        const double z = i * dz;
+        if (z >= z_evap_start && z <= z_evap_end) Q[i] = q_vol;
+        if (z >= z_cond_start && z <= z_cond_end) Q[i] = -q_vol;
     }
 
+    // Output file
     std::ofstream file("T_wall.dat");
 
+    // Time loop
     for (int n = 0; n < time_iter; ++n) {
 
         const double time = (n + 1) * dt;
 
         // store previous time level
-        T_w_bulk_old = T_w_bulk;
+        T_w_old = T_w;
 
         // ===================================================================
-        //                  TRIDIAGONAL COEFFICIENTS
+        //                      ASSEMBLY LOOP
         // ===================================================================
 
-        std::vector<double> aTW(N, 0.0);
-        std::vector<double> bTW(N, 0.0);
-        std::vector<double> cTW(N, 0.0);
-        std::vector<double> dTW(N, 0.0);
+        for (int i = 1; i < N - 1; ++i) {
+
+            const double cp = steel::cp(T_w[i]);
+            const double rho = steel::rho(T_w[i]);
+
+            const double k_l = 0.5 * (steel::k(T_w[i - 1]) + steel::k(T_w[i]));
+            const double k_r = 0.5 * (steel::k(T_w[i]) + steel::k(T_w[i + 1]));
+
+            aTW[i] = -k_l / (rho * cp * dz * dz);
+            bTW[i] = 1.0 / dt + (k_l + k_r) / (rho * cp * dz * dz);
+            cTW[i] = -k_r / (rho * cp * dz * dz);
+
+            dTW[i] =
+                T_w_old[i] / dt
+                + Q[i] / (rho * cp);
+        }
 
         // BC: zero gradient (adiabatic)
         aTW[0] = 0.0;
@@ -116,31 +122,10 @@ int main() {
         dTW[N - 1] = 0.0;
 
         // ===================================================================
-        //                      ASSEMBLY LOOP
-        // ===================================================================
-
-        for (int i = 1; i < N - 1; ++i) {
-
-            const double cp = steel::cp(T_w_bulk[i]);
-            const double rho = steel::rho(T_w_bulk[i]);
-
-            const double kL = steel::k(T_w_bulk[i - 1]);
-            const double kR = steel::k(T_w_bulk[i + 1]);
-
-            aTW[i] = -kL / (rho * cp * dz * dz);
-            bTW[i] = 1.0 / dt + (kL + kR) / (rho * cp * dz * dz);
-            cTW[i] = -kR / (rho * cp * dz * dz);
-
-            dTW[i] =
-                T_w_bulk_old[i] / dt
-                + Q_ow[i] / (rho * cp);
-        }
-
-        // ===================================================================
         //                          SOLVE
         // ===================================================================
 
-        T_w_bulk = solveTridiagonal(aTW, bTW, cTW, dTW);
+        T_w = solveTridiagonal(aTW, bTW, cTW, dTW);
 
         // ===================================================================
         //                          OUTPUT
@@ -148,7 +133,7 @@ int main() {
 
 
         for (int i = 0; i < N; ++i)
-            file << T_w_bulk[i] << " ";
+            file << T_w[i] << " ";
 
         file << "\n";
     }
