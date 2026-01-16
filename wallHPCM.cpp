@@ -21,7 +21,7 @@ int main() {
 
     std::vector<double> T_w(N, 300.0);          // Initial wall temperature [K]
     std::vector<double> T_w_old;                // Old temperature [K]
-    std::vector<double> Q(N);              // Heat pipe power [W]
+    std::vector<double> Q(N);                   // Heat pipe power [W]
 
     // Tridiagonal matrix coefficients
     std::vector<double> aTW(N, 0.0);
@@ -29,7 +29,7 @@ int main() {
     std::vector<double> cTW(N, 0.0);
     std::vector<double> dTW(N, 0.0);
 
-    constexpr double Q_tot = 1e3;                         // Total heat input [W]
+    constexpr double Q_tot = 1e3;                           // Total heat input [W]
     constexpr double z_evap_start = 0.0;                    // Evaporator start [m]
     constexpr double z_evap_end = 0.3;                      // Evaporator end [m]
     constexpr double z_cond_start = 0.7;                    // Condenser start [m]
